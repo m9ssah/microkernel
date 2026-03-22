@@ -4,6 +4,7 @@
 #include <stdint.h>
 
 #define MAX_PAYLOAD_SIZE 512
+#define MAX_WEIGHT_SIZE 64
 
 typedef enum {
     SERVICE_KERNEL = 0,
@@ -54,3 +55,29 @@ typedef struct {
 } Message;
 
 #endif
+
+/* PAYLOADS */
+
+typedef struct {
+    uint32_t servicetype;
+} RegisterPayload;
+
+typedef struct {
+    uint32_t worker_id;
+    uint32_t shard_id;
+} GetShardPayload;
+
+typedef struct {
+    uint32_t shard_size;
+    float data[128];
+} ShardDataPayload;
+
+typedef struct {
+    uint32_t iteration;
+    float weights[MAX_WEIGHT_SIZE];
+} WeightsPayload;
+
+typedef struct {
+    uint32_t worker_id;
+    float gradient[MAX_WEIGHT_SIZE];
+} GradientPayload;
