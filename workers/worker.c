@@ -8,7 +8,7 @@
 #include "../include/payloads.h"
 
 /*
- * what each worker does fo rour referefnce:
+ * what each worker does for your reference:
  *   1. registers with the kernel
  *   2. requests its data shard
  *   3. then each round receives weights, computes gradient, sends gradient back
@@ -24,7 +24,7 @@
 
 static uint32_t next_msg_id = 1;
 
-/* read n bytes from fd, blocking until all arrive (i think its the right implememtaiton) */
+/* read n bytes from fd, blocking until all arrive (i think its the right implememtation) */
 static int read_exact(int fd, void *buf, size_t n) {
     size_t total = 0;
     while (total < n) {
@@ -57,6 +57,7 @@ static int send_message(int fd, uint32_t src, uint32_t dest,
     msg.header.opcode       = opcode;
     msg.header.msg_id       = next_msg_id++;
     msg.header.payload_size = payload_size;
+    if (payload_size > MAX_PAYLOAD_SIZE) return -1;
     if (payload && payload_size > 0) {
         memcpy(msg.payload, payload, payload_size);
     }
