@@ -3,6 +3,8 @@
 
 #include <stdint.h>
 
+#define MAX_WEIGHT_SIZE 64
+
 typedef struct {
     uint32_t servicetype;
 } RegisterPayload;
