@@ -4,24 +4,27 @@
 #include <unistd.h>
 #include <stdint.h>
 #include <math.h>
-#include "protocol.h"
+#include "../include/protocol.h"
+#include "../include/payloads.h"
 
 /*
- * what each worker does fo rour referefnce:
+ * what each worker does for your reference:
  *   1. registers with the kernel
  *   2. requests its data shard
  *   3. then each round receives weights, computes gradient, sends gradient back
  *   4. fianlly exits on OP_TERMINATE
  *
  * pipes (passed as file descriptors via argv):
- *   read_fd 
- *   write_fd 
- *   worker_id 
+ *   read_fd
+ *   write_fd
+ *   worker_id
  */
 
 /* helper funcs */
 
-/* read n bytes from fd, blocking until all arrive (i think its the right implememtaiton) */
+static uint32_t next_msg_id = 1;
+
+/* read n bytes from fd, blocking until all arrive (i think its the right implememtation) */
 static int read_exact(int fd, void *buf, size_t n) {
     size_t total = 0;
     while (total < n) {
@@ -45,13 +48,16 @@ static int write_exact(int fd, const void *buf, size_t n) {
 
 /* send message with a payload */
 static int send_message(int fd, uint32_t src, uint32_t dest,
-                        uint32_t opcode, const void *payload, uint16_t payload_size) {
+                        uint32_t opcode, const void *payload, uint32_t payload_size) {
     Message msg;
     memset(&msg, 0, sizeof(msg));
+    msg.header.magic        = PROTOCOL_MAGIC;
     msg.header.src_id       = src;
     msg.header.dest_id      = dest;
     msg.header.opcode       = opcode;
+    msg.header.msg_id       = next_msg_id++;
     msg.header.payload_size = payload_size;
+    if (payload_size > MAX_PAYLOAD_SIZE) return -1;
     if (payload && payload_size > 0) {
         memcpy(msg.payload, payload, payload_size);
     }
@@ -60,7 +66,13 @@ static int send_message(int fd, uint32_t src, uint32_t dest,
 
 /* receive message back */
 static int recv_message(int fd, Message *msg) {
-    return read_exact(fd, msg, sizeof(Message));
+    if (read_exact(fd, msg, sizeof(Message)) < 0)
+        return -1;
+    if (msg->header.magic != PROTOCOL_MAGIC) {
+        fprintf(stderr, "[worker] ERROR: bad magic 0x%08X\n", msg->header.magic);
+        return -1;
+    }
+    return 0;
 }
 
 /* gradient computation (did logistic regression), more info at the bottom:)))))
@@ -83,11 +95,11 @@ static float sigmoid(float z) {
 }
 
 static void compute_gradient(
-    const float *data,     
+    const float *data,
     uint32_t     n_samples,
     uint32_t     n_features,
     const float *weights,
-    float       *gradient   
+    float       *gradient
 ) {
     memset(gradient, 0, sizeof(float) * n_features);
 
@@ -117,7 +129,7 @@ static void compute_gradient(
 /* shard loading
  *
  * shard files are plain text, one sample per line:
- *  
+ *
  * also written by gen_shards.py
  */
 static float *load_shard(const char *path, uint32_t *out_samples, uint32_t *out_features) {
@@ -217,7 +229,7 @@ int main(int argc, char *argv[]) {
     fprintf(stderr, "[worker %u] loaded shard: %u samples, %u features\n",
             worker_id, n_samples, n_features);
 
-    
+
     if (n_features > MAX_WEIGHT_SIZE) n_features = MAX_WEIGHT_SIZE;
 
     float gradient[MAX_WEIGHT_SIZE];
@@ -246,26 +258,37 @@ int main(int argc, char *argv[]) {
             break;
 
         case OP_WEIGHTS: {
-            /* unpack weights */
+            /* unpack: WeightsPayload header followed by float array in payload */
             WeightsPayload *wp = (WeightsPayload *)msg.payload;
-            memcpy(weights, wp->weights, sizeof(float) * n_features);
-            fprintf(stderr, "[worker %u] received weights for iteration %u\n",
-                    worker_id, wp->iteration);
+            uint32_t wcount = wp->weight_count;
+            if (wcount > n_features) wcount = n_features;
+
+            /* weights float array sits right after the WeightsPayload struct */
+            float *w_data = (float *)(msg.payload + sizeof(WeightsPayload));
+            memcpy(weights, w_data, sizeof(float) * wcount);
+
+            fprintf(stderr, "[worker %u] received weights for round %u (%u weights)\n",
+                    worker_id, wp->round_id, wcount);
 
             /* compute gradient on local shard */
             compute_gradient(shard_data, n_samples, n_features, weights, gradient);
 
-            /* send gradient back */
-            GradientPayload gp;
-            gp.worker_id = worker_id;
-            memcpy(gp.gradient, gradient, sizeof(float) * n_features);
+            /* send gradient back: GradientPayload header + float array */
+            uint8_t grad_buf[MAX_PAYLOAD_SIZE];
+            GradientPayload *gp = (GradientPayload *)grad_buf;
+            gp->round_id   = wp->round_id;
+            gp->grad_count = n_features;
+            memcpy(grad_buf + sizeof(GradientPayload), gradient,
+                   sizeof(float) * n_features);
+
+            uint32_t grad_total = sizeof(GradientPayload) + sizeof(float) * n_features;
 
             if (send_message(write_fd, worker_id, SERVICE_MODEL,
-                             OP_SUBMIT_GRADIENT, &gp, sizeof(gp)) < 0) {
+                             OP_SUBMIT_GRADIENT, grad_buf, grad_total) < 0) {
                 fprintf(stderr, "[worker %u] ERROR: failed to send gradient\n", worker_id);
             } else {
-                fprintf(stderr, "[worker %u] gradient submitted for iteration %u\n",
-                        worker_id, wp->iteration);
+                fprintf(stderr, "[worker %u] gradient submitted for round %u\n",
+                        worker_id, wp->round_id);
             }
             break;
         }
