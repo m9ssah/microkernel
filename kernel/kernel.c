@@ -164,6 +164,70 @@ static void register(void)
       }
 }
 
+static int find_write_fd(uint32_t process_id)
+{
+      for (int i = 0; i < nprocesses; i++)
+      {
+            if (processes[i].process_id == process_id)
+                  return processes[i].write_fd;
+      }
+      return -1;
+}
+
+static void run_rounds(void)
+{
+      for (int round = 0; round < NUM_ROUNDS; round++)
+      {
+            fprintf(stderr, "[kernel] starting round %d\n" round);
+
+            RoundStartPayload rs;
+            rs.round_id = round;
+
+            for (int i = 1; i < nprocesses; i++) // start at 1 to skip param_server
+            {
+                  if (send_message(processes[i].write_fd, processes[i].process_id, SERVICE_KERNEL, OP_ROUND_START, &rs, sizeof(rs)) < 0)
+                  {
+                        fprintf(stderr, "[kernel %u] ERROR: failed to send OP_ROUND_START\n" processes[i].process_id);
+                        exit(1);
+                  }
+            }
+
+            // collect grads and send weights to param server
+            for (int i = 1; i <= NUM_WORKERS; i++)
+            {
+                  Message msg;
+                  if (recv_message(processes[i].write_fd, &msg) < 0)
+                  {
+                        fprintf(stderr, "[kernel %u] ERROR: failed to read OP_SUBMIT_GRADIENT\n", processes[i].process_id);
+                        continue;
+                  }
+
+                  msg.header.dest_id = processes[0].process_id;
+                  if (send_message(processes[i].write_fd, processes[i].processed_id, SERVICE_KERNEL, msg_header.opcode, msg.payload, msg.header.payload_size) < 0)
+                  {
+                        fprintf(stderr, "[kernel %u] ERROR: failed to forward gradient to param server\n", processes[i].process_id);
+                        break;
+                  }
+            }
+
+            Message resp;
+            if (recv_message(processes[0].write_fd, &resp) < 0)
+            {
+                  fprintf(stderr, "[kernel] ERROR: failed to receive updated weights from param server\n");
+                  continue;
+            }
+
+            for (int i = 1; i < nprocesses, i++)
+            {
+                  if (send_message(processes[i].write_fd, processes[i].process_id, SERVICE_KERNEL, resp.header.opcode, resp.payload, resp.header.payload_size) < 0)
+                  {
+                        fprintf(stderr, "[kernel %u] ERROR: failed to send updated weights to worker\n", processes[i].process_id);
+                        continue;
+                  }
+            }
+      }
+}
+
 int main(void)
 {
       fork_param_server();
