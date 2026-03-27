@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 #define PROTOCOL_MAGIC   0xDEADC0DE
-#define MAX_PAYLOAD_SIZE 512
+#define MAX_PAYLOAD_SIZE 512        // TODO: adjust as needed
 
 typedef enum {
     SERVICE_KERNEL = 0,
