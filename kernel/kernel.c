@@ -228,6 +228,27 @@ static void run_rounds(void)
       }
 }
 
+static void terminate(void)
+{
+      for (int i = 0; i < nprocesses; i++)
+      {
+            if (send_message(processes[i].write_fd, processes[i].process_id, SERVICE_KERNEL, OP_TERMINATE, NULL, 0) < 0)
+            {
+                  fprintf(stderr, "[kernel %u] ERROR: failed to send OP_TERMINATE\n", processes[i].process_id);
+                  exit(1);
+            }
+            close(processes[i].write_fd);
+      }
+
+      for (int i = 0; i < nprocesses; i++)
+      {
+            int status;
+            waitpid(processes[i].pid, &status, 0);
+            fprintf(stderr, "[kernel] pid %d exited with status%d\n", processes[i].pid, WEXITSTATUS(status));
+            close(processes[i].read_fd);
+      }
+}
+
 int main(void)
 {
       fork_param_server();
@@ -235,6 +256,9 @@ int main(void)
             fork_worker(i);
 
       register();
+      run_rounds();
+      terminate();
 
+      fprintf(stderr, "[kernel] all processes terminated, exiting\n");
       return 0;
 }
