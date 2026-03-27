@@ -1,16 +1,16 @@
 FLAGS = -Wall -g -Iinclude
 .PHONY: all clean
 
-all: kernel worker param_server 
+all: kernel worker param_server
 
-kernel: kernel/kernel.c
-	gcc ${FLAGS} -o kernel kernel/kernel.c
+kernel: kernel/kernel.c common/net.c include/net.h
+	gcc ${FLAGS} -o kernel_app kernel/kernel.c common/net.c
 
-worker: workers/worker.c
-	gcc ${FLAGS} -o workers workers/worker.c
+worker: workers/worker.c common/net.c include/net.h
+	gcc ${FLAGS} -o worker workers/worker.c common/net.c
 
-param_server: 
-	gcc ${FLAGS} -o param_server workers/param_server.c
+param_server: workers/param_server.c common/net.c include/net.h
+	gcc ${FLAGS} -o param_server workers/param_server.c common/net.c
 
 clean:
-	rm -r kernel worker param_server
+	rm -f kernel_app worker param_server
