@@ -135,11 +135,42 @@ static void fork_worker(uint32_t worker_id)
       nprocesses++;
 }
 
+static void register(void)
+{
+      for (int i = 0; i < nprocesses; i++)
+      {
+            Message msg;
+            if (recv_message(processes[i].readfd, &msg) < 0)
+            {
+                  fprintf(stderr, "[kernel %u] ERROR: failed to read OP_REGISTER\n", processes[i].process_id)
+                      exit(1);
+            }
+            if (msg.header.opcode != OP_REGISTER)
+            {
+                  fprintf(stderr, "[kernel] ERROR: expected OP_REGISTER, got %u\n", msg.header.opcode);
+                  exit(1);
+            }
+
+            RegisterAckPayload ack;
+            ack.servicetype = msg.header.src_id;
+            ack.assigned_id = processes[i].process_id;
+
+            if (send_message(processes[i].write_fd, processes[i].process_id, SERVICE_KERNEL, OP_REGISTER_ACK, &ack, sizeof(ack)) < 0)
+            {
+                  fprintf(stderr, "[kernel %u] ERROR: failed to send OP_REGISTER_ACK\n", processes[i].process_id);
+                  exit(1);
+            }
+            fprintf(stderr, "[kernel] registered with process: %u, pid: %d\n", processes[i].process_id, processes[i].pid);
+      }
+}
+
 int main(void)
 {
       fork_param_server();
       for (uint32_t i = 0; i < NUM_WORKERS; i++)
             fork_worker(i);
+
+      register();
 
       return 0;
 }
