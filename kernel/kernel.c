@@ -10,8 +10,8 @@
 #include "../include/payloads.h"
 #include "../include/net.h"
 
-#define NUM_WORKERS 3 // TODO: change as needed
-#define NUM_PROCESSES (1 + NUM_WORKERS)
+#define NUM_WORKERS 3                   // TODO: change as needed
+#define NUM_PROCESSES (2 + NUM_WORKERS) // workers + param_server + monitor
 
 typedef struct
 {
@@ -45,12 +45,12 @@ static void fork_worker(uint32_t worker_id)
 
       if (pid == 0) // child process
       {
+            close(k2w[1]);
+            close(w2k[0]);
+
             char read_fd_str[16];
             char write_fd_str[16];
             char worker_id_str[16];
-
-            close(k2w[1]);
-            close(w2k[0]);
 
             snprintf(read_fd_str, sizeof(read_fd_str), "%d", k2w[0]);
             snprintf(write_fd_str, sizeof(write_fd_str), "%d", w2k[1]);
@@ -140,6 +140,52 @@ static void fork_param_server(void)
       nprocesses++;
 }
 
+static void fork_monitor(void)
+{
+      int k2m[2];
+      int m2k[2];
+
+      if (pipe(k2m) < 0 || pipe(m2k) < 0)
+      {
+            perror("pipe");
+            exit(1);
+      }
+
+      pid_t pid = fork();
+
+      if (pid < 0)
+      {
+            perror("fork");
+            exit(1);
+      }
+
+      if (pid == 0) // child process
+      {
+            close(k2m[1]);
+            close(m2k[0]);
+
+            char kernel_read_fd_str[16];
+            char kernel_write_fd_str[16];
+
+            snprintf(kernel_read_fd_str, sizeof(kernel_read_fd_str), "%d", k2m[0]);
+            snprintf(kernel_write_fd_str, sizeof(kernel_write_fd_str), "%d", m2k[1]);
+
+            execl("./monitor", "monitor", kernel_read_fd_str, kernel_write_fd_str, (char *)NULL);
+            perror("execl");
+            exit(1);
+      }
+
+      // parent process
+      close(k2m[0]);
+      close(m2k[1]);
+
+      processes[nprocesses].process_id = SERVICE_MONITOR;
+      processes[nprocesses].read_fd = m2k[0];
+      processes[nprocesses].write_fd = k2m[1];
+      processes[nprocesses].pid = pid;
+      nprocesses++;
+}
+
 static void register_processes(void)
 {
       for (int i = 0; i < nprocesses; i++)
@@ -199,6 +245,7 @@ int main(void)
       for (uint32_t i = 1; i <= NUM_WORKERS; i++)
             fork_worker(i);
       fork_param_server();
+      fork_monitor();
 
       register_processes();
       wait_for_children();
