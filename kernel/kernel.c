@@ -162,10 +162,18 @@ static void fork_monitor(void)
 {
       int k2m[2];
       int m2k[2];
+      int control_fd;
 
     if (pipe(k2m) < 0 || pipe(m2k) < 0)
     {
         perror("pipe");
+        exit(1);
+    }
+
+    control_fd = dup(STDIN_FILENO);
+    if (control_fd < 0)
+    {
+        perror("dup");
         exit(1);
     }
 
@@ -179,10 +187,12 @@ static void fork_monitor(void)
 
     if (pid == 0)
     {
+        char control_fd_str[16];
+
         close(k2m[1]);
         close(m2k[0]);
 
-        if (dup2(k2child[0], STDIN_FILENO) < 0 || dup2(child2k[1], STDOUT_FILENO) < 0)
+        if (dup2(k2m[0], STDIN_FILENO) < 0 || dup2(m2k[1], STDOUT_FILENO) < 0)
         {
             perror("dup2");
             exit(1);
@@ -191,13 +201,15 @@ static void fork_monitor(void)
         close(k2m[0]);
         close(m2k[1]);
 
-        execl("./workers", "./monitor", (char *)NULL);
+        snprintf(control_fd_str, sizeof(control_fd_str), "%d", control_fd);
+        execl("./monitor", "./monitor", control_fd_str, (char *)NULL);
         perror("execl");
         exit(1);
     }
 
     close(k2m[0]);
     close(m2k[1]);
+    close(control_fd);
 
     processes[nprocesses].process_id = SERVICE_MONITOR;
     processes[nprocesses].read_fd = m2k[0];
