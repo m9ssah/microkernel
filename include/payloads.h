@@ -31,7 +31,7 @@ typedef struct {
 typedef struct {
     uint32_t round_id;
     uint8_t  status;
-} RoundComepletePayload;
+} RoundCompletePayload;
 
 typedef struct {
     uint32_t round_id;
