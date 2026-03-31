@@ -80,7 +80,9 @@ static void fork_worker(uint32_t worker_id)
         close(k2w[0]);
         close(w2k[1]);
 
-        execl("./workers", "worker", worked_id);
+        char id_str[16];
+        snprintf(worker_id_str, sizeof(worker_id_str), "%u", worker_id);
+        execl("./workers", "worker", id_str, (char *)NULL);
         perror("execl");
         exit(1);
     }
@@ -88,8 +90,6 @@ static void fork_worker(uint32_t worker_id)
     // parent process
     close(k2w[0]);
     close(w2k[1]);
-
-    snprintf(worker_id_str, sizeof(worker_id_str), "%u", worker_id);
 
     processes[nprocesses].process_id = worker_id;
     processes[nprocesses].read_fd = w2k[0];
@@ -147,7 +147,7 @@ static void fork_param_server(void)
     close(k2p[0]);
     close(p2k[1]);
 
-    processes[nprocesses].process_id = SERVICE_SCHEDULER;
+    processes[nprocesses].process_id = SERVICE_MODEL;
     processes[nprocesses].read_fd = p2k[0];
     processes[nprocesses].write_fd = k2p[1];
     processes[nprocesses].pid = pid;
@@ -159,7 +159,6 @@ static void fork_monitor(void)
 {
     int k2m[2];
     int m2k[2];
-    int control_fd;
 
     if (pipe(k2m) < 0 || pipe(m2k) < 0)
     {
@@ -167,15 +166,7 @@ static void fork_monitor(void)
         exit(1);
     }
 
-    control_fd = dup(STDIN_FILENO);
-    if (control_fd < 0)
-    {
-        perror("dup");
-        exit(1);
-    }
-
     pid_t pid = fork();
-
     if (pid < 0)
     {
         perror("fork");
@@ -184,8 +175,6 @@ static void fork_monitor(void)
 
     if (pid == 0)
     {
-        char control_fd_str[16];
-
         close(k2m[1]);
         close(m2k[0]);
 
@@ -198,15 +187,13 @@ static void fork_monitor(void)
         close(k2m[0]);
         close(m2k[1]);
 
-        snprintf(control_fd_str, sizeof(control_fd_str), "%d", control_fd);
-        execl("./monitor", "./monitor", control_fd_str, (char *)NULL);
+        execl("./monitor", "./monitor", (char *)NULL);
         perror("execl");
         exit(1);
     }
 
     close(k2m[0]);
     close(m2k[1]);
-    close(control_fd);
 
     processes[nprocesses].process_id = SERVICE_MONITOR;
     processes[nprocesses].read_fd = m2k[0];
@@ -285,7 +272,7 @@ static void forward_monitor_control(int monitor_idx, int param_idx)
                          OP_QUERY_PROGRESS, NULL, 0) < 0)
             return;
 
-        if (recv_message(processes[param_idx].read_fd, &progress) < 0)
+        if (recv_message(processes[param_idx].read_fd, &progress) < 0) // TODO: check if param_server responds immediately or not, else deadlock
             return;
 
         if (progress.header.opcode == OP_PROGRESS)
@@ -344,12 +331,11 @@ static void run_rounds(void)
         exit(1);
     }
 
-    for (int round = 0; round < NUM_ROUNDS; round++)
+    Message msg;
+    int round;
+    for (round = 0; round < NUM_ROUNDS; round++)
     {
-        Message msg;
         int alive_workers;
-        time_t now;
-        struct tm *tm_info;
 
         for (int i = 0; i < NUM_WORKERS; i++)
         {
@@ -360,24 +346,6 @@ static void run_rounds(void)
             rs.round_id = round;
             if (send_message(processes[i].write_fd, SERVICE_KERNEL, processes[i].process_id,
                              OP_ROUND_START, &rs, sizeof(rs)) < 0)
-            {
-                processes[i].alive = 0;
-            }
-        }
-
-        for (int i = 0; i < NUM_WORKERS; i++)
-        {
-            if (!processes[i].alive)
-                continue;
-
-            if (send_message(processes[i].write_fd, SERVICE_KERNEL, processes[i].process_id,
-                             OP_HEARTBEAT_PING, NULL, 0) < 0)
-            {
-                processes[i].alive = 0;
-                continue;
-            }
-
-            if (recv_message(processes[i].read_fd, &msg) < 0 || msg.header.opcode != OP_HEARTBEAT_PONG)
             {
                 processes[i].alive = 0;
             }
@@ -433,7 +401,26 @@ static void run_rounds(void)
 
         alive_workers = count_alive_workers();
         fprintf(stderr, "[kernel] round=%u alive_workers=%d", round, alive_workers);
+
+        for (int i = 0; i < NUM_WORKERS; i++)
+        {
+            if (!processes[i].alive)
+                continue;
+
+            if (send_message(processes[i].write_fd, SERVICE_KERNEL, processes[i].process_id,
+                             OP_HEARTBEAT_PING, NULL, 0) < 0)
+            {
+                processes[i].alive = 0;
+                continue;
+            }
+
+            if (recv_message(processes[i].read_fd, &msg) < 0 || msg.header.opcode != OP_HEARTBEAT_PONG)
+            {
+                processes[i].alive = 0;
+            }
+        }
     }
+    fprintf(stderr, "[kernel] round=%d complete, alive_workers=%d\n", round, count_alive_workers());
 }
 
 static void shutdown_all(void)
