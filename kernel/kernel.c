@@ -81,7 +81,7 @@ static void fork_worker(uint32_t worker_id)
         close(w2k[1]);
 
         char id_str[16];
-        snprintf(worker_id_str, sizeof(worker_id_str), "%u", worker_id);
+        snprintf(id_str, sizeof(id_str), "%u", worker_id);
         execl("./workers", "worker", id_str, (char *)NULL);
         perror("execl");
         exit(1);
