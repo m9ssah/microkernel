@@ -82,7 +82,7 @@ int main(void)
 
     while (1)
     {
-        choice = read_menu_choice(cmd);
+        int choice = read_menu_choice(cmd);
         if (choice < 0)
             break;
 
@@ -164,7 +164,7 @@ int main(void)
             fprintf(stderr, "[monitor] invalid option\n");
         }
     }
-    fclose(cmd)
-        unlink(FIFO_PATH);
+    fclose(cmd);
+    unlink(FIFO_PATH);
     return 0;
 }

@@ -82,7 +82,7 @@ static void fork_worker(uint32_t worker_id)
 
         char id_str[16];
         snprintf(id_str, sizeof(id_str), "%u", worker_id);
-        execl("./workers", "worker", id_str, (char *)NULL);
+        execl("./bin/workers", "worker", id_str, (char *)NULL);
         perror("execl");
         exit(1);
     }
@@ -138,7 +138,7 @@ static void fork_param_server(void)
         close(k2p[0]);
         close(p2k[1]);
 
-        execl("./param_server", "param_server", NULL);
+        execl("./bin/param_server", "param_server", NULL);
         perror("execl");
         exit(1);
     }
@@ -187,7 +187,7 @@ static void fork_monitor(void)
         close(k2m[0]);
         close(m2k[1]);
 
-        execl("./monitor", "./monitor", (char *)NULL);
+        execl("./bin/monitor", "./bin/monitor", (char *)NULL);
         perror("execl");
         exit(1);
     }

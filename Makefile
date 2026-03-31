@@ -1,19 +1,23 @@
-FLAGS = -Wall -g -Iinclude
 .PHONY: all clean
+FLAGS = -Wall -g -Iinclude
 
-all: kernel worker param_server monitor
+all: bin/kernel bin/worker bin/param_server bin/monitor
 
-kernel: kernel/kernel.c common/net.c include/net.h
-	gcc ${FLAGS} -o microkernel kernel/kernel.c common/net.c
+bin/kernel: kernel/kernel.c common/net.c include/net.h
+	mkdir -p bin
+	gcc ${FLAGS} -o bin/microkernel kernel/kernel.c common/net.c
 
-worker: workers/worker.c common/net.c include/net.h
-	gcc ${FLAGS} -o worker workers/worker.c common/net.c
+bin/worker: workers/worker.c common/net.c include/net.h
+	mkdir -p bin
+	gcc ${FLAGS} -o bin/worker workers/worker.c common/net.c
 
-param_server: param_server/param_server.c common/net.c include/net.h
-	gcc ${FLAGS} -o param_server param_server/param_server.c common/net.c
+bin/param_server: param_server/param_server.c common/net.c include/net.h
+	mkdir -p bin
+	gcc ${FLAGS} -o bin/param_server param_server/param_server.c common/net.c
 
-monitor: monitor/monitor.c common/net.c include/net.h
-	gcc ${FLAGS} -o monitor monitor/monitor.c common/net.c
+bin/monitor: monitor/monitor.c common/net.c include/net.h
+	mkdir -p bin
+	gcc ${FLAGS} -o bin/monitor monitor/monitor.c common/net.c
 
 clean:
-	rm -f microkernel worker param_server monitor
+	rm -rf bin
