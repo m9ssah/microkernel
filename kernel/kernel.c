@@ -138,7 +138,9 @@ static void fork_param_server(void)
         close(k2p[0]);
         close(p2k[1]);
 
-        execl("./bin/param_server", "param_server", NULL);
+        char nw_str[16];
+        snprintf(nw_str, sizeof(nw_str), "%u", NUM_WORKERS);
+        execl("./bin/param_server", "param_server", nw_str, (char *)NULL);
         perror("execl");
         exit(1);
     }
@@ -333,6 +335,27 @@ static void run_rounds(void)
 
     Message msg;
     int round;
+
+    GetWeightsPayload gw;
+    gw.round_id = 0;
+    send_message(processes[param_idx].write_fd, SERVICE_KERNEL, SERVICE_MODEL,
+                 OP_GET_WEIGHTS, &gw, sizeof(gw));
+
+    if (recv_message(processes[param_idx].read_fd, &msg) < 0 ||
+        msg.header.opcode != OP_WEIGHTS)
+    {
+        fprintf(stderr, "[kernel] ERROR: failed to get initial weights\n");
+        exit(1);
+    }
+
+    for (int i = 0; i < NUM_WORKERS; i++) // broadcast initial weights
+    {
+        if (!processes[i].alive)
+            continue;
+        send_message(processes[i].write_fd, SERVICE_KERNEL, processes[i].process_id,
+                     OP_WEIGHTS, msg.payload, msg.header.payload_size);
+    }
+
     for (round = 0; round < NUM_ROUNDS; round++)
     {
         int alive_workers;
