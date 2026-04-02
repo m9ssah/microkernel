@@ -11,14 +11,12 @@
 /*
  * what each worker does for your reference:
  *   1. registers with the kernel
- *   2. requests its data shard
+ *   2. loads its data shard from file
  *   3. then each round receives weights, computes gradient, sends gradient back
- *   4. fianlly exits on OP_TERMINATE
+ *   4. finally exits on OP_TERMINATE
  *
- * pipes (passed as file descriptors via argv):
- *   read_fd
- *   write_fd
- *   worker_id
+ * communication via stdin/stdout (redirected to pipes by kernel)
+ * argv: worker <worker_id>
  */
 
 /* gradient computation (did logistic regression), more info at the bottom:)))))
@@ -132,17 +130,16 @@ static float *load_shard(const char *path, uint32_t *out_samples, uint32_t *out_
 /* main func */
 
 int main(int argc, char *argv[]) {
-    if (argc < 4) {
-        fprintf(stderr, "Usage: %s <read_fd> <write_fd> <worker_id>\n", argv[0]);
+    if (argc < 2) {
+        fprintf(stderr, "Usage: %s <worker_id>\n", argv[0]);
         return 1;
     }
 
-    int      read_fd  = atoi(argv[1]);
-    int      write_fd = atoi(argv[2]);
-    uint32_t worker_id = (uint32_t)atoi(argv[3]);
+    int      read_fd  = STDIN_FILENO;
+    int      write_fd = STDOUT_FILENO;
+    uint32_t worker_id = (uint32_t)atoi(argv[1]);
 
-    fprintf(stderr, "[worker %u] started (read_fd=%d write_fd=%d)\n",
-            worker_id, read_fd, write_fd);
+    fprintf(stderr, "[worker %u] started\n", worker_id);
 
     /* step 1: register with kernel  */
     RegisterPayload reg = { .servicetype = SERVICE_WORKER };
@@ -180,8 +177,9 @@ int main(int argc, char *argv[]) {
 
     float gradient[MAX_WEIGHT_SIZE];
     float weights[MAX_WEIGHT_SIZE];
+    int has_weights = 0;
 
-    /* main training loop (again double check later)*/
+    /* main training loop */
     while (1) {
         if (recv_message(read_fd, &msg) < 0) {
             fprintf(stderr, "[worker %u] pipe closed, exiting\n", worker_id);
@@ -193,8 +191,6 @@ int main(int argc, char *argv[]) {
         case OP_TERMINATE:
             fprintf(stderr, "[worker %u] received OP_TERMINATE, shutting down\n", worker_id);
             free(shard_data);
-            close(read_fd);
-            close(write_fd);
             return 0;
 
         case OP_HEARTBEAT_PING:
@@ -212,9 +208,20 @@ int main(int argc, char *argv[]) {
             /* weights float array sits right after the WeightsPayload struct */
             float *w_data = (float *)(msg.payload + sizeof(WeightsPayload));
             memcpy(weights, w_data, sizeof(float) * wcount);
+            has_weights = 1;
 
             fprintf(stderr, "[worker %u] received weights for round %u (%u weights)\n",
                     worker_id, wp->round_id, wcount);
+            break;
+        }
+
+        case OP_ROUND_START: {
+            if (!has_weights) {
+                fprintf(stderr, "[worker %u] WARNING: OP_ROUND_START but no weights received yet\n", worker_id);
+                break;
+            }
+
+            RoundStartPayload *rs = (RoundStartPayload *)msg.payload;
 
             /* compute gradient on local shard */
             compute_gradient(shard_data, n_samples, n_features, weights, gradient);
@@ -222,7 +229,7 @@ int main(int argc, char *argv[]) {
             /* send gradient back: GradientPayload header + float array */
             uint8_t grad_buf[MAX_PAYLOAD_SIZE];
             GradientPayload *gp = (GradientPayload *)grad_buf;
-            gp->round_id   = wp->round_id;
+            gp->round_id   = rs->round_id;
             gp->grad_count = n_features;
             memcpy(grad_buf + sizeof(GradientPayload), gradient,
                    sizeof(float) * n_features);
@@ -234,7 +241,7 @@ int main(int argc, char *argv[]) {
                 fprintf(stderr, "[worker %u] ERROR: failed to send gradient\n", worker_id);
             } else {
                 fprintf(stderr, "[worker %u] gradient submitted for round %u\n",
-                        worker_id, wp->round_id);
+                        worker_id, rs->round_id);
             }
             break;
         }
