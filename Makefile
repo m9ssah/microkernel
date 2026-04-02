@@ -13,7 +13,7 @@ bin/worker: workers/worker.c common/net.c include/net.h
 
 bin/param_server: param_server/param_server.c common/net.c include/net.h
 	mkdir -p bin
-	gcc ${FLAGS} -o bin/param_server param_server/param_server.c common/net.c
+	gcc ${FLAGS} -o bin/param_server param_server/param_server.c common/net.c -lm
 
 bin/monitor: monitor/monitor.c common/net.c include/net.h
 	mkdir -p bin
