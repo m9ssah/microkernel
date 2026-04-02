@@ -72,9 +72,8 @@ static void compute_gradient(
 
 /* shard loading
  *
- * shard files are plain text, one sample per line:
+ * shard files are plain text, one sample per line
  *
- * also written by gen_shards.py
  */
 static float *load_shard(const char *path, uint32_t *out_samples, uint32_t *out_features) {
     FILE *f = fopen(path, "r");
