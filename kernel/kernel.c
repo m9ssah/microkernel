@@ -360,6 +360,8 @@ static void run_rounds(void)
     {
         int alive_workers;
 
+        forward_monitor_control(monitor_idx, param_idx);
+
         for (int i = 0; i < NUM_WORKERS; i++)
         {
             if (!processes[i].alive)
@@ -393,7 +395,10 @@ static void run_rounds(void)
             }
         }
 
-        forward_monitor_control(monitor_idx, param_idx);
+        GetWeightsPayload gw_round;
+        gw_round.round_id = round;
+        send_message(processes[param_idx].write_fd, SERVICE_KERNEL, SERVICE_MODEL,
+                     OP_GET_WEIGHTS, &gw_round, sizeof(gw_round));
 
         if (recv_message(processes[param_idx].read_fd, &msg) < 0)
         {
@@ -423,7 +428,7 @@ static void run_rounds(void)
         }
 
         alive_workers = count_alive_workers();
-        fprintf(stderr, "[kernel] round=%u alive_workers=%d", round, alive_workers);
+        fprintf(stderr, "[kernel] round=%u alive_workers=%d\n", round, alive_workers);
 
         for (int i = 0; i < NUM_WORKERS; i++)
         {
