@@ -9,7 +9,7 @@ bin/kernel: kernel/kernel.c common/net.c include/net.h
 
 bin/worker: workers/worker.c common/net.c include/net.h
 	mkdir -p bin
-	gcc ${FLAGS} -o bin/worker workers/worker.c common/net.c
+	gcc ${FLAGS} -o bin/worker workers/worker.c common/net.c -lm
 
 bin/param_server: param_server/param_server.c common/net.c include/net.h
 	mkdir -p bin
