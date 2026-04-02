@@ -21,3 +21,4 @@ bin/monitor: monitor/monitor.c common/net.c include/net.h
 
 clean:
 	rm -rf bin
+	

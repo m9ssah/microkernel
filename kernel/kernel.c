@@ -82,7 +82,7 @@ static void fork_worker(uint32_t worker_id)
 
         char id_str[16];
         snprintf(id_str, sizeof(id_str), "%u", worker_id);
-        execl("./bin/workers", "worker", id_str, (char *)NULL);
+        execl("./bin/worker", "worker", id_str, (char *)NULL);
         perror("execl");
         exit(1);
     }
