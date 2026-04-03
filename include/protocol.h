@@ -3,10 +3,11 @@
 
 #include <stdint.h>
 
-#define PROTOCOL_MAGIC   0xDEADC0DE
-#define MAX_PAYLOAD_SIZE 512        // TODO: adjust as needed
+#define PROTOCOL_MAGIC 0xDEADC0DE
+#define MAX_PAYLOAD_SIZE 512 // TODO: adjust as needed
 
-typedef enum {
+typedef enum
+{
     SERVICE_KERNEL = 0,
     SERVICE_DATA,
     SERVICE_MODEL,
@@ -15,16 +16,11 @@ typedef enum {
     SERVICE_WORKER
 } ServiceType;
 
-typedef enum {
+typedef enum
+{
     OP_REGISTER,
     OP_REGISTER_ACK,
     OP_TERMINATE,
-
-    OP_CHECK_ACTIVE,
-    OP_ACTIVE_RESP,
-
-    OP_GET_SHARD,
-    OP_SHARD_DATA,
 
     OP_GET_WEIGHTS,
     OP_WEIGHTS,
@@ -42,8 +38,9 @@ typedef enum {
     OP_ADJUST_LR,
 } Opcode;
 
-typedef struct {
-    uint32_t magic;      // for protocol validation
+typedef struct
+{
+    uint32_t magic; // for protocol validation
     uint32_t src_id;
     uint32_t dest_id;
     uint32_t opcode;
@@ -51,7 +48,8 @@ typedef struct {
     uint32_t payload_size;
 } MessageHeader;
 
-typedef struct {
+typedef struct
+{
     MessageHeader header;
     uint8_t payload[MAX_PAYLOAD_SIZE];
 } Message;

@@ -11,13 +11,14 @@
 #include "../include/payloads.h"
 #include "../include/net.h"
 
-#define NUM_WORKERS 3 // TODO: change as needed
+#define NUM_WORKERS 3
 #define NUM_ROUNDS 10
 #define NUM_PROCESSES (2 + NUM_WORKERS) // workers + param_server + monitor
 
 typedef struct
 {
     uint32_t process_id;
+    uint32_t service_type;
     int read_fd;
     int write_fd;
     pid_t pid;
@@ -27,24 +28,24 @@ typedef struct
 static ProcessEntry processes[NUM_PROCESSES];
 static int nprocesses = 0;
 
-static int find_proc_index_by_id(uint32_t process_id)
+static int find_param_server_index(void)
 {
     for (int i = 0; i < nprocesses; i++)
     {
-        if (processes[i].process_id == process_id)
+        if (processes[i].service_type == SERVICE_MODEL)
             return i;
     }
     return -1;
 }
 
-static int find_param_server_index(void)
-{
-    return find_proc_index_by_id(SERVICE_MODEL);
-}
-
 static int find_monitor_index(void)
 {
-    return find_proc_index_by_id(SERVICE_MONITOR);
+    for (int i = 0; i < nprocesses; i++)
+    {
+        if (processes[i].service_type == SERVICE_MONITOR)
+            return i;
+    }
+    return -1;
 }
 
 static void fork_worker(uint32_t worker_id)
@@ -92,6 +93,7 @@ static void fork_worker(uint32_t worker_id)
     close(w2k[1]);
 
     processes[nprocesses].process_id = worker_id;
+    processes[nprocesses].service_type = SERVICE_WORKER;
     processes[nprocesses].read_fd = w2k[0];
     processes[nprocesses].write_fd = k2w[1];
     processes[nprocesses].pid = pid;
@@ -150,6 +152,7 @@ static void fork_param_server(void)
     close(p2k[1]);
 
     processes[nprocesses].process_id = SERVICE_MODEL;
+    processes[nprocesses].service_type = SERVICE_MODEL;
     processes[nprocesses].read_fd = p2k[0];
     processes[nprocesses].write_fd = k2p[1];
     processes[nprocesses].pid = pid;
@@ -198,6 +201,7 @@ static void fork_monitor(void)
     close(m2k[1]);
 
     processes[nprocesses].process_id = SERVICE_MONITOR;
+    processes[nprocesses].service_type = SERVICE_MONITOR;
     processes[nprocesses].read_fd = m2k[0];
     processes[nprocesses].write_fd = k2m[1];
     processes[nprocesses].pid = pid;
@@ -247,6 +251,57 @@ static int count_alive_workers(void)
             alive++;
     }
     return alive;
+}
+
+static int get_round_delay_ms(void)
+{
+    const char *delay_str = getenv("SPECTATE");
+    if (!delay_str || delay_str[0] == '\0')
+        return 0;
+
+    char *endptr = NULL;
+    long delay = strtol(delay_str, &endptr, 10);
+    if (endptr == delay_str || *endptr != '\0' || delay <= 0)
+        return 0;
+
+    if (delay > 60000)
+        delay = 60000;
+
+    return (int)delay;
+}
+
+static int wait_for_monitor_start_if_requested(int monitor_idx)
+{
+    const char *wait_flag = getenv("WAIT_MONITOR");
+    if (!wait_flag || strcmp(wait_flag, "1") != 0)
+        return 0;
+
+    fprintf(stderr, "[kernel] waiting for monitor start command (echo '4' > /tmp/monitor_fifo)\n");
+
+    while (1)
+    {
+        Message mon_msg;
+        if (recv_message(processes[monitor_idx].read_fd, &mon_msg) < 0)
+        {
+            fprintf(stderr, "[kernel] ERROR: monitor disconnected before start\n");
+            return -1;
+        }
+
+        if (mon_msg.header.opcode == OP_RESUME)
+        {
+            fprintf(stderr, "[kernel] received start command from monitor\n");
+            return 0;
+        }
+
+        if (mon_msg.header.opcode == OP_TERMINATE)
+        {
+            fprintf(stderr, "[kernel] monitor requested terminate before start\n");
+            return -1;
+        }
+
+        fprintf(stderr, "[kernel] ignoring opcode %u before start (send 4 to start)\n",
+                mon_msg.header.opcode);
+    }
 }
 
 static void forward_monitor_control(int monitor_idx, int param_idx)
@@ -326,11 +381,21 @@ static void run_rounds(void)
 {
     int param_idx = find_param_server_index();
     int monitor_idx = find_monitor_index();
+    int round_delay_ms = get_round_delay_ms();
 
     if (param_idx < 0 || monitor_idx < 0)
     {
         fprintf(stderr, "[kernel] ERROR: missing param_server or monitor\n");
         exit(1);
+    }
+
+    if (wait_for_monitor_start_if_requested(monitor_idx) < 0)
+        return;
+
+    if (round_delay_ms > 0)
+    {
+        fprintf(stderr, "[kernel] round delay enabled: %d ms (set SPECTATE)\n",
+                round_delay_ms);
     }
 
     Message msg;
@@ -361,6 +426,18 @@ static void run_rounds(void)
         int alive_workers;
 
         forward_monitor_control(monitor_idx, param_idx);
+
+        if (round_delay_ms > 0)
+        {
+            int remaining_ms = round_delay_ms;
+            while (remaining_ms > 0)
+            {
+                int slice_ms = (remaining_ms > 100) ? 100 : remaining_ms;
+                usleep((useconds_t)slice_ms * 1000);
+                forward_monitor_control(monitor_idx, param_idx);
+                remaining_ms -= slice_ms;
+            }
+        }
 
         for (int i = 0; i < NUM_WORKERS; i++)
         {

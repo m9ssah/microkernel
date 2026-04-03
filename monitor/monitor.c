@@ -73,10 +73,20 @@ int main(void)
     fprintf(stderr, "          echo '4' > %s          # Resume\n", FIFO_PATH);
     fprintf(stderr, "          echo '5' > %s          # Quit\n", FIFO_PATH);
 
-    FILE *cmd = fopen(FIFO_PATH, "r");
+    int fifo_fd = open(FIFO_PATH, O_RDWR);
+    if (fifo_fd < 0)
+    {
+        perror("open");
+        unlink(FIFO_PATH);
+        return 1;
+    }
+
+    FILE *cmd = fdopen(fifo_fd, "r");
     if (!cmd)
     {
-        perror("fopen");
+        perror("fdopen");
+        close(fifo_fd);
+        unlink(FIFO_PATH);
         return 1;
     }
 
@@ -84,7 +94,14 @@ int main(void)
     {
         int choice = read_menu_choice(cmd);
         if (choice < 0)
+        {
+            if (feof(cmd))
+            {
+                clearerr(cmd);
+                continue;
+            }
             break;
+        }
 
         if (choice == 1)
         {
