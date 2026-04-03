@@ -304,7 +304,7 @@ static int wait_for_monitor_start_if_requested(int monitor_idx)
     }
 }
 
-static void forward_monitor_control(int monitor_idx, int param_idx)
+static int forward_monitor_control(int monitor_idx, int param_idx)
 {
     fd_set rfds;
     struct timeval tv;
@@ -316,10 +316,10 @@ static void forward_monitor_control(int monitor_idx, int param_idx)
     tv.tv_usec = 0;
 
     if (select(processes[monitor_idx].read_fd + 1, &rfds, NULL, NULL, &tv) <= 0)
-        return;
+        return 0;
 
     if (recv_message(processes[monitor_idx].read_fd, &mon_msg) < 0)
-        return;
+        return 0;
 
     if (mon_msg.header.opcode == OP_QUERY_PROGRESS)
     {
@@ -327,10 +327,10 @@ static void forward_monitor_control(int monitor_idx, int param_idx)
 
         if (send_message(processes[param_idx].write_fd, SERVICE_KERNEL, SERVICE_MODEL,
                          OP_QUERY_PROGRESS, NULL, 0) < 0)
-            return;
+            return 0;
 
         if (recv_message(processes[param_idx].read_fd, &progress) < 0) // TODO: check if param_server responds immediately or not, else deadlock
-            return;
+            return 0;
 
         if (progress.header.opcode == OP_PROGRESS)
         {
@@ -373,8 +373,34 @@ static void forward_monitor_control(int monitor_idx, int param_idx)
                 }
                 break;
             }
+
+            if (resume_msg.header.opcode == OP_TERMINATE)
+            {
+                fprintf(stderr, "[kernel] terminate requested by monitor\n");
+                processes[monitor_idx].alive = 0;
+                if (processes[monitor_idx].write_fd >= 0)
+                {
+                    close(processes[monitor_idx].write_fd);
+                    processes[monitor_idx].write_fd = -1;
+                }
+                return 1;
+            }
         }
     }
+
+    else if (mon_msg.header.opcode == OP_TERMINATE)
+    {
+        fprintf(stderr, "[kernel] terminate requested by monitor\n");
+        processes[monitor_idx].alive = 0;
+        if (processes[monitor_idx].write_fd >= 0)
+        {
+            close(processes[monitor_idx].write_fd);
+            processes[monitor_idx].write_fd = -1;
+        }
+        return 1;
+    }
+
+    return 0;
 }
 
 static void run_rounds(void)
@@ -425,7 +451,8 @@ static void run_rounds(void)
     {
         int alive_workers;
 
-        forward_monitor_control(monitor_idx, param_idx);
+        if (forward_monitor_control(monitor_idx, param_idx) > 0)
+            break;
 
         if (round_delay_ms > 0)
         {
@@ -434,7 +461,8 @@ static void run_rounds(void)
             {
                 int slice_ms = (remaining_ms > 100) ? 100 : remaining_ms;
                 usleep((useconds_t)slice_ms * 1000);
-                forward_monitor_control(monitor_idx, param_idx);
+                if (forward_monitor_control(monitor_idx, param_idx) > 0)
+                    goto rounds_done;
                 remaining_ms -= slice_ms;
             }
         }
@@ -525,6 +553,7 @@ static void run_rounds(void)
             }
         }
     }
+rounds_done:
     fprintf(stderr, "[kernel] round=%d complete, alive_workers=%d\n", round, count_alive_workers());
 }
 
@@ -532,12 +561,18 @@ static void shutdown_all(void)
 {
     for (int i = 0; i < nprocesses; i++)
     {
-        send_message(processes[i].write_fd, SERVICE_KERNEL, processes[i].process_id,
-                     OP_TERMINATE, NULL, 0);
+        if (processes[i].alive && processes[i].write_fd >= 0)
+        {
+            send_message(processes[i].write_fd, SERVICE_KERNEL, processes[i].process_id,
+                         OP_TERMINATE, NULL, 0);
+        }
     }
 
     for (int i = 0; i < nprocesses; i++)
-        close(processes[i].write_fd);
+    {
+        if (processes[i].write_fd >= 0)
+            close(processes[i].write_fd);
+    }
 
     for (int i = 0; i < nprocesses; i++)
     {
@@ -550,7 +585,10 @@ static void shutdown_all(void)
     }
 
     for (int i = 0; i < nprocesses; i++)
-        close(processes[i].read_fd);
+    {
+        if (processes[i].read_fd >= 0)
+            close(processes[i].read_fd);
+    }
 }
 
 int main(void)
