@@ -6,14 +6,30 @@
 #include <sys/types.h>
 #include <sys/select.h>
 #include <stdint.h>
+#include <errno.h>
+#include <signal.h>
+#include <netinet/in.h>
+#include <netinet/tcp.h>
+#include <arpa/inet.h>
+#include <sys/socket.h>
 
 #include "../include/protocol.h"
 #include "../include/payloads.h"
 #include "../include/net.h"
 
-#define NUM_WORKERS 3
+#define NUM_WORKERS 4
 #define NUM_ROUNDS 10
 #define NUM_PROCESSES (2 + NUM_WORKERS) // workers + param_server + monitor
+
+#define FIRMWARE_WORKER_ID NUM_WORKERS
+#define NUM_FORKED_WORKERS (NUM_WORKERS - 1)
+
+#define FW_DEFAULT_HOST "127.0.0.1"
+#define FW_DEFAULT_PORT 5555
+#define FW_CONNECT_ATTEMPTS 20
+#define FW_CONNECT_DELAY_MS 250
+
+#define FW_RECV_TIMEOUT_SEC 5
 
 typedef struct
 {
@@ -99,6 +115,85 @@ static void fork_worker(uint32_t worker_id)
     processes[nprocesses].pid = pid;
     processes[nprocesses].alive = 1;
     nprocesses++;
+}
+
+static int connect_firmware_worker(uint32_t worker_id)
+{
+    const char *host = getenv("FW_HOST");
+    const char *port_str = getenv("FW_PORT");
+    int port = FW_DEFAULT_PORT;
+    struct sockaddr_in addr;
+    struct timeval tv;
+    int fd = -1;
+    int one = 1;
+
+    if (!host || host[0] == '\0')
+        host = FW_DEFAULT_HOST;
+
+    if (port_str && port_str[0] != '\0')
+    {
+        int parsed = atoi(port_str);
+        if (parsed > 0 && parsed < 65536)
+            port = parsed;
+    }
+
+    memset(&addr, 0, sizeof(addr));
+    addr.sin_family = AF_INET;
+    addr.sin_port = htons((uint16_t)port);
+
+    if (inet_pton(AF_INET, host, &addr.sin_addr) != 1)
+    {
+        fprintf(stderr, "[kernel] ERROR: FW_HOST '%s' is not a valid IPv4 address\n", host);
+        return -1;
+    }
+
+    fprintf(stderr, "[kernel] connecting to firmware worker at %s:%d\n", host, port);
+
+    for (int attempt = 0; attempt < FW_CONNECT_ATTEMPTS; attempt++)
+    {
+        fd = socket(AF_INET, SOCK_STREAM, 0);
+        if (fd < 0)
+        {
+            perror("socket");
+            return -1;
+        }
+
+        if (connect(fd, (struct sockaddr *)&addr, sizeof(addr)) == 0)
+            break;
+
+        /* a failed connect() leaves the socket unusable even for a retry, so
+         * it has to be discarded and remade each time round. */
+        close(fd);
+        fd = -1;
+        usleep(FW_CONNECT_DELAY_MS * 1000);
+    }
+
+    if (fd < 0)
+    {
+        fprintf(stderr, "[kernel] ERROR: could not reach firmware worker at %s:%d (%s)\n",
+                host, port, strerror(errno));
+        fprintf(stderr, "[kernel]        is QEMU running? (make -C firmware run)\n");
+        return -1;
+    }
+
+    if (setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &one, sizeof(one)) < 0)
+        perror("[kernel] warning: TCP_NODELAY");
+
+    tv.tv_sec = FW_RECV_TIMEOUT_SEC;
+    tv.tv_usec = 0;
+    if (setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv)) < 0)
+        perror("[kernel] warning: SO_RCVTIMEO");
+
+    processes[nprocesses].process_id = worker_id;
+    processes[nprocesses].service_type = SERVICE_WORKER;
+    processes[nprocesses].read_fd = fd;   /* same fd both ways: a socket is  */
+    processes[nprocesses].write_fd = fd;  /* bidirectional, unlike a pipe    */
+    processes[nprocesses].pid = 0;        /* not our child; nothing to reap  */
+    processes[nprocesses].alive = 1;
+    nprocesses++;
+
+    fprintf(stderr, "[kernel] firmware worker %u connected (fd=%d)\n", worker_id, fd);
+    return 0;
 }
 
 static void fork_param_server(void)
@@ -238,7 +333,12 @@ static void register_all(void)
             exit(1);
         }
 
-        fprintf(stderr, "[kernel] registered process %u (pid=%d)\n", processes[i].process_id, processes[i].pid);
+        if (processes[i].pid > 0)
+            fprintf(stderr, "[kernel] registered process %u (pid=%d, pipe)\n",
+                    processes[i].process_id, processes[i].pid);
+        else
+            fprintf(stderr, "[kernel] registered process %u (firmware, socket fd=%d)\n",
+                    processes[i].process_id, processes[i].read_fd);
     }
 }
 
@@ -577,6 +677,14 @@ static void shutdown_all(void)
     for (int i = 0; i < nprocesses; i++)
     {
         int status;
+
+        if (processes[i].pid <= 0)
+        {
+            fprintf(stderr, "[kernel] process %u is not a child (firmware worker), nothing to reap\n",
+                    processes[i].process_id);
+            continue;
+        }
+
         waitpid(processes[i].pid, &status, 0);
         if (WIFEXITED(status))
             fprintf(stderr, "[kernel] pid %d exited with status %d\n", processes[i].pid, WEXITSTATUS(status));
@@ -586,15 +694,40 @@ static void shutdown_all(void)
 
     for (int i = 0; i < nprocesses; i++)
     {
-        if (processes[i].read_fd >= 0)
+        if (processes[i].read_fd >= 0 && processes[i].read_fd != processes[i].write_fd)
             close(processes[i].read_fd);
     }
 }
 
+static int firmware_enabled(void)
+{
+    const char *s = getenv("FW_WORKER");
+    return !(s && strcmp(s, "0") == 0);
+}
+
 int main(void)
 {
-    for (uint32_t i = 1; i <= NUM_WORKERS; i++)
+    signal(SIGPIPE, SIG_IGN);
+
+    for (uint32_t i = 1; i <= NUM_FORKED_WORKERS; i++)
         fork_worker(i);
+
+    if (firmware_enabled())
+    {
+        if (connect_firmware_worker(FIRMWARE_WORKER_ID) < 0)
+        {
+            fprintf(stderr, "[kernel] aborting: firmware worker unavailable "
+                            "(set FW_WORKER=0 to run without it)\n");
+            return 1;
+        }
+    }
+    else
+    {
+        fprintf(stderr, "[kernel] FW_WORKER=0: using a forked worker for slot %u\n",
+                (uint32_t)FIRMWARE_WORKER_ID);
+        fork_worker(FIRMWARE_WORKER_ID);
+    }
+
     fork_param_server();
     fork_monitor();
 
