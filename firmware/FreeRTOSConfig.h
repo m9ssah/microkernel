@@ -43,10 +43,10 @@
 #define configLIBRARY_LOWEST_INTERRUPT_PRIORITY 7
 #define configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY 5
 
-#define configKERNEL_INTERRUPT_PRIORITY                                                                            \
-  (configLIBRARY_LOWEST_INTERRUPT_PRIORITY << (8 - configPRIO_BITS)) #define configMAX_SYSCALL_INTERRUPT_PRIORITY( \
-      configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY                                                                 \
-      << (8 - configPRIO_BITS)) /* 0xA0 */
+#define configKERNEL_INTERRUPT_PRIORITY \
+    (configLIBRARY_LOWEST_INTERRUPT_PRIORITY << (8 - configPRIO_BITS))       /* 0xE0 */
+#define configMAX_SYSCALL_INTERRUPT_PRIORITY \
+    (configLIBRARY_MAX_SYSCALL_INTERRUPT_PRIORITY << (8 - configPRIO_BITS))  /* 0xA0 */
 
 // assertions
 #ifndef __ASSEMBLER__
